@@ -1,6 +1,7 @@
 """Shared utilities for bash command parsing."""
 import os
 import re
+import shlex
 import subprocess
 
 # Cache for alias expansions (populated on first use)
@@ -1013,4 +1014,55 @@ def extract_all_commands(command: str) -> list[str]:
     for subcmd in subshell_cmds:
         all_commands.extend(extract_all_commands(subcmd))
 
+    # A shell's -c string and eval's arguments are commands too.
+    for subcmd in subcommands:
+        for code in extract_code_strings(subcmd):
+            all_commands.extend(extract_all_commands(code))
+
     return all_commands
+
+
+_SHELLS = {'sh', 'bash', 'zsh', 'dash', 'ksh'}
+
+
+def extract_code_strings(command: str) -> list[str]:
+    """
+    Return the code that a single command runs as a string.
+
+    Example:
+        >>> extract_code_strings("bash -lc 'rm x'")
+        ['rm x']
+        >>> extract_code_strings('eval "rm x"')
+        ['rm x']
+    """
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return []
+    while words and re.match(r'^\w+=', words[0]):
+        words = words[1:]  # VAR=value prefix
+    if not words:
+        return []
+
+    program = words[0].rsplit('/', 1)[-1]
+    if program == 'eval':
+        return [' '.join(words[1:])] if len(words) > 1 else []
+    if program not in _SHELLS:
+        return []
+
+    # `-c` can stand alone or join other short options: `-c`, `-lc`, `-ec`.
+    # The first word after the options is the code.
+    runs_string = False
+    i = 1
+    while i < len(words) and words[i].startswith('-') and words[i] != '--':
+        option = words[i]
+        if option in ('-o', '+o'):
+            i += 1  # takes a value: `-o pipefail`
+        elif not option.startswith('--') and 'c' in option[1:]:
+            runs_string = True
+        i += 1
+    if i < len(words) and words[i] == '--':
+        i += 1
+    if runs_string and i < len(words):
+        return [words[i]]
+    return []
