@@ -41,11 +41,29 @@ def _is_rm_command(single_cmd: str) -> bool:
 
     # Check for rm at the start of command (with or without path prefix)
     # Matches: rm, rm -rf, /bin/rm, /usr/bin/rm foo, etc.
-    return bool(
+    if (
         normalized == "rm" or
         normalized.startswith("rm ") or
         re.match(r'^/\S*/rm\b', normalized)
-    )
+    ):
+        return True
+
+    # unlink and srm delete files as rm does. shred deletes the file it
+    # overwrites when given -u or --remove.
+    words = normalized.split()
+    program = words[0].rsplit('/', 1)[-1]
+    if program in ('unlink', 'srm'):
+        return True
+    if program == 'shred':
+        return any(_is_shred_remove_option(word) for word in words[1:])
+    return False
+
+
+def _is_shred_remove_option(word: str) -> bool:
+    """-u, --remove, --remove=wipesync, or -u in a cluster such as -zu."""
+    if word == '--remove' or word.startswith('--remove='):
+        return True
+    return word.startswith('-') and not word.startswith('--') and 'u' in word[1:]
 
 
 def check_rm_command(command: str) -> tuple[bool, str | None]:
